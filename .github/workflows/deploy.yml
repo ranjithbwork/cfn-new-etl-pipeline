@@ -1,141 +1,101 @@
-{
-  "Version": "2012-10-17",
-  "Statement":
-    [
-      {
-        "Sid": "CloudFormationAccess",
-        "Effect": "Allow",
-        "Action":
-          [
-            "cloudformation:CreateStack",
-            "cloudformation:UpdateStack",
-            "cloudformation:DeleteStack",
-            "cloudformation:DescribeStacks",
-            "cloudformation:DescribeStackEvents",
-            "cloudformation:DescribeStackResources",
-            "cloudformation:GetTemplate",
-            "cloudformation:ValidateTemplate",
-            "cloudformation:ListStackResources",
-            "cloudformation:CreateChangeSet",
-            "cloudformation:DescribeChangeSet",
-            "cloudformation:ExecuteChangeSet",
-            "cloudformation:DeleteChangeSet",
-            "cloudformation:ListChangeSets",
-          ],
-        "Resource": "arn:aws:cloudformation:ap-southeast-2:*:stack/cfn-new-etl-pipeline/*",
-      },
-      {
-        "Sid": "S3BucketManagement",
-        "Effect": "Allow",
-        "Action":
-          [
-            "s3:CreateBucket",
-            "s3:DeleteBucket",
-            "s3:PutBucketPublicAccessBlock",
-            "s3:PutEncryptionConfiguration",
-            "s3:PutLifecycleConfiguration",
-            "s3:PutBucketNotification",
-            "s3:GetBucketNotification",
-            "s3:ListBucket",
-            "s3:GetObject",
-            "s3:PutObject",
-            "s3:DeleteObject",
-            "s3:GetBucketLocation",
-          ],
-        "Resource":
-          [
-            "arn:aws:s3:::cfn-new-pipeline-input",
-            "arn:aws:s3:::cfn-new-pipeline-input/*",
-            "arn:aws:s3:::cfn-new-pipeline-output",
-            "arn:aws:s3:::cfn-new-pipeline-output/*",
-          ],
-      },
-      {
-        "Sid": "IAMRoleManagement",
-        "Effect": "Allow",
-        "Action":
-          [
-            "iam:CreateRole",
-            "iam:DeleteRole",
-            "iam:GetRole",
-            "iam:PassRole",
-            "iam:AttachRolePolicy",
-            "iam:DetachRolePolicy",
-            "iam:PutRolePolicy",
-            "iam:DeleteRolePolicy",
-            "iam:GetRolePolicy",
-            "iam:ListRolePolicies",
-            "iam:ListAttachedRolePolicies",
-            "iam:TagRole",
-            "iam:UntagRole",
-          ],
-        "Resource": "arn:aws:iam::*:role/*",
-      },
-      {
-        "Sid": "GlueManagement",
-        "Effect": "Allow",
-        "Action":
-          [
-            "glue:CreateDatabase",
-            "glue:DeleteDatabase",
-            "glue:GetDatabase",
-            "glue:CreateJob",
-            "glue:DeleteJob",
-            "glue:GetJob",
-            "glue:UpdateJob",
-            "glue:CreateCrawler",
-            "glue:DeleteCrawler",
-            "glue:GetCrawler",
-            "glue:UpdateCrawler",
-            "glue:CreateWorkflow",
-            "glue:DeleteWorkflow",
-            "glue:GetWorkflow",
-            "glue:CreateTrigger",
-            "glue:DeleteTrigger",
-            "glue:GetTrigger",
-            "glue:UpdateTrigger",
-            "glue:StartTrigger",
-            "glue:TagResource",
-            "glue:UntagResource",
-          ],
-        "Resource": "*",
-      },
-      {
-        "Sid": "LambdaManagement",
-        "Effect": "Allow",
-        "Action":
-          [
-            "lambda:CreateFunction",
-            "lambda:DeleteFunction",
-            "lambda:GetFunction",
-            "lambda:UpdateFunctionCode",
-            "lambda:UpdateFunctionConfiguration",
-            "lambda:AddPermission",
-            "lambda:RemovePermission",
-            "lambda:GetPolicy",
-            "lambda:TagResource",
-            "lambda:UntagResource",
-            "lambda:InvokeFunction",
-          ],
-        "Resource": "arn:aws:lambda:ap-southeast-2:*:function:*",
-      },
-      {
-        "Sid": "CloudWatchLogsForCustomResource",
-        "Effect": "Allow",
-        "Action":
-          [
-            "logs:CreateLogGroup",
-            "logs:CreateLogStream",
-            "logs:PutLogEvents",
-            "logs:DeleteLogGroup",
-          ],
-        "Resource": "arn:aws:logs:ap-southeast-2:*:log-group:*",
-      },
-      {
-        "Sid": "STSIdentity",
-        "Effect": "Allow",
-        "Action": "sts:GetCallerIdentity",
-        "Resource": "*",
-      },
-    ],
-}
+name: Deploy CFN ETL Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - delete
+
+env:
+  AWS_REGION: ap-southeast-2
+  STACK_NAME: cfn-new-etl-pipeline
+  TEMPLATE_FILE: cloudformation/cfn-new-etl-pipeline.yaml
+  INPUT_BUCKET: cfn-new-pipeline-input
+
+jobs:
+  deploy:
+    if: github.event.inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://${{ env.TEMPLATE_FILE }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-file ${{ env.TEMPLATE_FILE }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+
+      - name: Show stack failure events if deploy failed
+        if: failure()
+        run: |
+          aws cloudformation describe-stack-events \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED' || ResourceStatus=='ROLLBACK_IN_PROGRESS'].[LogicalResourceId,ResourceStatusReason]" \
+            --output table
+
+      - name: Upload Glue script to input bucket
+        run: |
+          aws s3 cp glue/glue_job.py s3://${{ env.INPUT_BUCKET }}/scripts/glue_job.py
+
+      - name: Upload sample CSV to trigger the pipeline
+        run: |
+          aws s3 cp sample-data/sample.csv s3://${{ env.INPUT_BUCKET }}/input/sample.csv
+
+      - name: Show stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "Stacks[0].Outputs" \
+            --output table
+
+  delete:
+    if: github.event.inputs.action == 'delete'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Empty buckets before stack deletion
+        run: |
+          aws s3 rm s3://${{ env.INPUT_BUCKET }} --recursive || true
+          aws s3 rm s3://cfn-new-pipeline-output --recursive || true
+
+      - name: Delete CloudFormation stack
+        run: |
+          aws cloudformation delete-stack \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for stack deletion to complete
+        run: |
+          aws cloudformation wait stack-delete-complete \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }}
