@@ -269,7 +269,7 @@ Resources:
   StartWorkflowTrigger:
     Type: AWS::Glue::Trigger
     Properties:
-      Name: start-workflow-trigger
+      Name: new-start-workflow-trigger
       Type: ON_DEMAND
       WorkflowName: !Ref GlueWorkflowName
       Actions:
@@ -282,7 +282,7 @@ Resources:
   AfterInputCrawlerTrigger:
     Type: AWS::Glue::Trigger
     Properties:
-      Name: after-input-crawler-trigger
+      Name: new-after-input-crawler-trigger
       Type: CONDITIONAL
       WorkflowName: !Ref GlueWorkflowName
       StartOnCreation: true
@@ -302,7 +302,7 @@ Resources:
   AfterJobTrigger:
     Type: AWS::Glue::Trigger
     Properties:
-      Name: after-job-trigger
+      Name: new-after-job-trigger
       Type: CONDITIONAL
       WorkflowName: !Ref GlueWorkflowName
       StartOnCreation: true
