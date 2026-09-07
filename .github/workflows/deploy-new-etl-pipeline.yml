@@ -1,13 +1,13 @@
-name: Deploy CFN ETL Pipeline
+name: Deploy New ETL Pipeline
 
 on:
   workflow_dispatch:
 
 env:
   AWS_REGION: ap-southeast-2
-  STACK_NAME: cfn-new-etl-pipeline
-  TEMPLATE_FILE: cloudformation/cfn-new-etl-pipeline.yaml
-  INPUT_BUCKET: cfn-new-pipeline-input
+  STACK_NAME: new-etl-pipeline
+  TEMPLATE_FILE: new-etl-pipeline.yaml
+  INPUT_BUCKET: new-pipeline-input
 
 jobs:
   deploy:
