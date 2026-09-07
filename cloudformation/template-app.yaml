@@ -1,11 +1,10 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Stack 2 of 2 - IAM roles, Glue Catalog/Job/Crawlers/Workflow, Lambda, and the
   S3 event notification, for the CFN-managed ETL pipeline (cfn-new prefix).
   Requires template-buckets.yaml to already be deployed.
 
 Resources:
-
   ### IAM Role — Glue ETL Job ###
 
   GlueJobRole:
@@ -13,7 +12,7 @@ Resources:
     Properties:
       RoleName: cfn-new-glue-job-role
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -24,26 +23,36 @@ Resources:
       Policies:
         - PolicyName: cfn-new-glue-job-s3-policy
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Sid: ListBuckets
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}
+                    - Bucket: !ImportValue cfn-new-input-bucket-name
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}
+                    - Bucket: !ImportValue cfn-new-output-bucket-name
               - Sid: ReadInputAndScripts
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}/input/*
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-artifacts-bucket-name}/glue/*
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}/input/*
+                    - Bucket: !ImportValue cfn-new-input-bucket-name
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}/glue/*
+                    - Bucket: !ImportValue cfn-new-artifacts-bucket-name
               - Sid: WriteOutput
                 Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
-                Resource: !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}/output/*
+                Resource: !Sub
+                  - arn:aws:s3:::${Bucket}/output/*
+                  - Bucket: !ImportValue cfn-new-output-bucket-name
               - Sid: WorkflowRunProperties
                 Effect: Allow
                 Action:
@@ -58,7 +67,7 @@ Resources:
     Properties:
       RoleName: cfn-new-glue-crawler-role
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -69,20 +78,28 @@ Resources:
       Policies:
         - PolicyName: cfn-new-glue-crawler-s3-policy
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Sid: ListBuckets
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}
+                    - Bucket: !ImportValue cfn-new-input-bucket-name
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}
+                    - Bucket: !ImportValue cfn-new-output-bucket-name
               - Sid: ReadInputAndOutput
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}/input/*
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}/output/*
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}/input/*
+                    - Bucket: !ImportValue cfn-new-input-bucket-name
+                  - !Sub
+                    - arn:aws:s3:::${Bucket}/output/*
+                    - Bucket: !ImportValue cfn-new-output-bucket-name
 
   ### IAM Role — Lambda ###
 
@@ -91,7 +108,7 @@ Resources:
     Properties:
       RoleName: cfn-new-lambda-role
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
@@ -102,7 +119,7 @@ Resources:
       Policies:
         - PolicyName: cfn-new-lambda-glue-policy
           PolicyDocument:
-            Version: '2012-10-17'
+            Version: "2012-10-17"
             Statement:
               - Sid: StartWorkflowOnly
                 Effect: Allow
@@ -128,14 +145,14 @@ Resources:
       Role: !GetAtt GlueJobRole.Arn
       Command:
         Name: pythonshell
-        PythonVersion: '3.9'
+        PythonVersion: "3.9"
         ScriptLocation: !Sub
           - s3://${Bucket}/glue/glue_job.py
           - Bucket: !ImportValue cfn-new-artifacts-bucket-name
       MaxCapacity: 0.0625
       Timeout: 10
       MaxRetries: 0
-      GlueVersion: '3.0'
+      GlueVersion: "3.0"
       ExecutionProperty:
         MaxConcurrentRuns: 1
 
