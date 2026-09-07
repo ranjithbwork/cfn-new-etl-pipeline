@@ -1,75 +1,10 @@
-AWSTemplateFormatVersion: "2010-09-09"
+AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  CFN-managed S3-to-Glue-Workflow ETL pipeline (cfn-new prefix).
+  Stack 2 of 2 - IAM roles, Glue Catalog/Job/Crawlers/Workflow, Lambda, and the
+  S3 event notification, for the CFN-managed ETL pipeline (cfn-new prefix).
+  Requires template-buckets.yaml to already be deployed.
 
 Resources:
-  ### S3 Buckets ###
-
-  PipelineInputBucket:
-    Type: AWS::S3::Bucket
-    DependsOn: LambdaInvokePermission
-    Properties:
-      BucketName: cfn-new-pipeline-input
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: abort-incomplete-multipart-uploads
-            Status: Enabled
-            AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 7
-      NotificationConfiguration:
-        LambdaConfigurations:
-          - Event: s3:ObjectCreated:*
-            Function: !GetAtt TriggerLambda.Arn
-            Filter:
-              S3Key:
-                Rules:
-                  - Name: prefix
-                    Value: input/
-                  - Name: suffix
-                    Value: .csv
-
-  PipelineOutputBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: cfn-new-pipeline-output
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      LifecycleConfiguration:
-        Rules:
-          - Id: abort-incomplete-multipart-uploads
-            Status: Enabled
-            AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 7
-
-  ArtifactsBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub cfn-new-artifacts-${AWS::AccountId}
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
 
   ### IAM Role — Glue ETL Job ###
 
@@ -78,7 +13,7 @@ Resources:
     Properties:
       RoleName: cfn-new-glue-job-role
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -89,26 +24,26 @@ Resources:
       Policies:
         - PolicyName: cfn-new-glue-job-s3-policy
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
               - Sid: ListBuckets
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-input
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-output
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}
               - Sid: ReadInputAndScripts
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-input/input/*
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-input/scripts/*
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}/input/*
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-artifacts-bucket-name}/glue/*
               - Sid: WriteOutput
                 Effect: Allow
                 Action:
                   - s3:PutObject
                   - s3:GetObject
-                Resource: !Sub arn:aws:s3:::cfn-new-pipeline-output/output/*
+                Resource: !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}/output/*
               - Sid: WorkflowRunProperties
                 Effect: Allow
                 Action:
@@ -123,7 +58,7 @@ Resources:
     Properties:
       RoleName: cfn-new-glue-crawler-role
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -134,20 +69,20 @@ Resources:
       Policies:
         - PolicyName: cfn-new-glue-crawler-s3-policy
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
               - Sid: ListBuckets
                 Effect: Allow
                 Action: s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-input
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-output
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}
               - Sid: ReadInputAndOutput
                 Effect: Allow
                 Action: s3:GetObject
                 Resource:
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-input/input/*
-                  - !Sub arn:aws:s3:::cfn-new-pipeline-output/output/*
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}/input/*
+                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}/output/*
 
   ### IAM Role — Lambda ###
 
@@ -156,7 +91,7 @@ Resources:
     Properties:
       RoleName: cfn-new-lambda-role
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -167,7 +102,7 @@ Resources:
       Policies:
         - PolicyName: cfn-new-lambda-glue-policy
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
               - Sid: StartWorkflowOnly
                 Effect: Allow
@@ -193,12 +128,14 @@ Resources:
       Role: !GetAtt GlueJobRole.Arn
       Command:
         Name: pythonshell
-        PythonVersion: "3.9"
-        ScriptLocation: !Sub s3://cfn-new-pipeline-input/scripts/glue_job.py
+        PythonVersion: '3.9'
+        ScriptLocation: !Sub
+          - s3://${Bucket}/glue/glue_job.py
+          - Bucket: !ImportValue cfn-new-artifacts-bucket-name
       MaxCapacity: 0.0625
       Timeout: 10
       MaxRetries: 0
-      GlueVersion: "3.0"
+      GlueVersion: '3.0'
       ExecutionProperty:
         MaxConcurrentRuns: 1
 
@@ -212,7 +149,9 @@ Resources:
       DatabaseName: !Ref GlueCatalogDatabase
       Targets:
         S3Targets:
-          - Path: !Sub s3://cfn-new-pipeline-input/input/
+          - Path: !Sub
+              - s3://${Bucket}/input/
+              - Bucket: !ImportValue cfn-new-input-bucket-name
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
@@ -225,7 +164,9 @@ Resources:
       DatabaseName: !Ref GlueCatalogDatabase
       Targets:
         S3Targets:
-          - Path: !Sub s3://cfn-new-pipeline-output/output/
+          - Path: !Sub
+              - s3://${Bucket}/output/
+              - Bucket: !ImportValue cfn-new-output-bucket-name
       SchemaChangePolicy:
         UpdateBehavior: UPDATE_IN_DATABASE
         DeleteBehavior: LOG
@@ -238,8 +179,6 @@ Resources:
       Name: cfn-new-workflow
       Description: Orchestrates input-crawler -> transform-job -> output-crawler
 
-  ### Trigger 1: ON_DEMAND — starts the input crawler ###
-
   StartWorkflowTrigger:
     Type: AWS::Glue::Trigger
     Properties:
@@ -249,8 +188,6 @@ Resources:
       Actions:
         - CrawlerName: !Ref GlueInputCrawler
       StartOnCreation: false
-
-  ### Trigger 2: fires when input crawler succeeds — runs the ETL job ###
 
   AfterInputCrawlerTrigger:
     Type: AWS::Glue::Trigger
@@ -267,8 +204,6 @@ Resources:
             CrawlState: SUCCEEDED
       Actions:
         - JobName: !Ref GlueTransformJob
-
-  ### Trigger 3: fires when the job succeeds — runs the output crawler ###
 
   AfterJobTrigger:
     Type: AWS::Glue::Trigger
@@ -300,10 +235,8 @@ Resources:
         Variables:
           GLUE_WORKFLOW_NAME: !Ref GlueWorkflow
       Code:
-        S3Bucket: !Ref ArtifactsBucket
+        S3Bucket: !ImportValue cfn-new-artifacts-bucket-name
         S3Key: lambda/lambda_function.zip
-
-  ### Permission allowing S3 to invoke Lambda ###
 
   LambdaInvokePermission:
     Type: AWS::Lambda::Permission
@@ -311,16 +244,12 @@ Resources:
       FunctionName: !Ref TriggerLambda
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
-      SourceArn: !Sub arn:aws:s3:::cfn-new-pipeline-input
+      SourceArn: !Sub
+        - arn:aws:s3:::${Bucket}
+        - Bucket: !ImportValue cfn-new-input-bucket-name
       SourceAccount: !Ref AWS::AccountId
 
 Outputs:
-  InputBucketName:
-    Value: !Ref PipelineInputBucket
-  OutputBucketName:
-    Value: !Ref PipelineOutputBucket
-  ArtifactsBucketName:
-    Value: !Ref ArtifactsBucket
   GlueJobRoleArn:
     Value: !GetAtt GlueJobRole.Arn
   GlueCrawlerRoleArn:
