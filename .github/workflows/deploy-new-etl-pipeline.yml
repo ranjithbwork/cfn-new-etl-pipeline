@@ -46,13 +46,19 @@ jobs:
             --query "StackEvents[?ResourceStatus=='CREATE_FAILED' || ResourceStatus=='UPDATE_FAILED' || ResourceStatus=='ROLLBACK_IN_PROGRESS'].[LogicalResourceId,ResourceStatusReason]" \
             --output table
 
+      - name: Get input bucket name from stack outputs
+        id: bucket
+        run: |
+          INPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='InputBucketNameOut'].OutputValue" --output text)
+          echo "input_bucket=$INPUT_BUCKET" >> "$GITHUB_OUTPUT"
+
       - name: Upload Glue script to input bucket
         run: |
-          aws s3 cp glue/glue_job.py s3://${{ env.INPUT_BUCKET }}/scripts/glue_job.py
+          aws s3 cp glue/glue_job.py s3://${{ steps.bucket.outputs.input_bucket }}/scripts/glue_job.py
 
       - name: Upload sample CSV to trigger the pipeline
         run: |
-          aws s3 cp sample-data/sample.csv s3://${{ env.INPUT_BUCKET }}/input/sample.csv
+          aws s3 cp sample-data/sample.csv s3://${{ steps.bucket.outputs.input_bucket }}/input/sample.csv
 
       - name: Show stack outputs
         run: |
