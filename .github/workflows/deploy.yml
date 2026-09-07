@@ -1,84 +1,141 @@
-name: Deploy CFN ETL Pipeline
-
-on:
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Deploy buckets stack
-        run: |
-          aws cloudformation deploy \
-            --template-file cloudformation/template-buckets.yaml \
-            --stack-name cfn-new-etl-buckets \
-            --region ${{ secrets.AWS_REGION }} \
-            --no-fail-on-empty-changeset
-
-      - name: Get bucket names from stack outputs
-        id: buckets
-        run: |
-          INPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name cfn-new-etl-buckets --query "Stacks[0].Outputs[?OutputKey=='InputBucketName'].OutputValue" --output text)
-          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks --stack-name cfn-new-etl-buckets --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" --output text)
-          echo "input_bucket=$INPUT_BUCKET" >> "$GITHUB_OUTPUT"
-          echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
-
-      - name: Zip Lambda function
-        run: |
-          cd lambda
-          zip lambda_function.zip lambda_function.py
-          cd ..
-
-      - name: Upload Lambda zip and Glue script to artifacts bucket
-        run: |
-          aws s3 cp lambda/lambda_function.zip s3://${{ steps.buckets.outputs.artifacts_bucket }}/lambda/lambda_function.zip
-          aws s3 cp glue/glue_job.py s3://${{ steps.buckets.outputs.artifacts_bucket }}/glue/glue_job.py
-
-      - name: Deploy app stack (IAM, Glue, Lambda, Workflow)
-        run: |
-          aws cloudformation deploy \
-            --template-file cloudformation/template-app.yaml \
-            --stack-name cfn-new-etl-pipeline \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region ${{ secrets.AWS_REGION }} \
-            --no-fail-on-empty-changeset
-
-      - name: Wire S3 event notification to Lambda
-        run: |
-          LAMBDA_ARN=$(aws cloudformation describe-stacks --stack-name cfn-new-etl-pipeline --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionArn'].OutputValue" --output text)
-          cat > /tmp/notification.json << EOF
-          {
-            "LambdaFunctionConfigurations": [
-              {
-                "LambdaFunctionArn": "$LAMBDA_ARN",
-                "Events": ["s3:ObjectCreated:*"],
-                "Filter": {
-                  "Key": {
-                    "FilterRules": [
-                      {"Name": "prefix", "Value": "input/"},
-                      {"Name": "suffix", "Value": ".csv"}
-                    ]
-                  }
-                }
-              }
-            ]
-          }
-          EOF
-          aws s3api put-bucket-notification-configuration \
-            --bucket ${{ steps.buckets.outputs.input_bucket }} \
-            --notification-configuration file:///tmp/notification.json
-
-      - name: Upload sample CSV to trigger the pipeline
-        run: |
-          aws s3 cp sample-data/sample.csv s3://${{ steps.buckets.outputs.input_bucket }}/input/sample.csv
+{
+  "Version": "2012-10-17",
+  "Statement":
+    [
+      {
+        "Sid": "CloudFormationAccess",
+        "Effect": "Allow",
+        "Action":
+          [
+            "cloudformation:CreateStack",
+            "cloudformation:UpdateStack",
+            "cloudformation:DeleteStack",
+            "cloudformation:DescribeStacks",
+            "cloudformation:DescribeStackEvents",
+            "cloudformation:DescribeStackResources",
+            "cloudformation:GetTemplate",
+            "cloudformation:ValidateTemplate",
+            "cloudformation:ListStackResources",
+            "cloudformation:CreateChangeSet",
+            "cloudformation:DescribeChangeSet",
+            "cloudformation:ExecuteChangeSet",
+            "cloudformation:DeleteChangeSet",
+            "cloudformation:ListChangeSets",
+          ],
+        "Resource": "arn:aws:cloudformation:ap-southeast-2:*:stack/cfn-new-etl-pipeline/*",
+      },
+      {
+        "Sid": "S3BucketManagement",
+        "Effect": "Allow",
+        "Action":
+          [
+            "s3:CreateBucket",
+            "s3:DeleteBucket",
+            "s3:PutBucketPublicAccessBlock",
+            "s3:PutEncryptionConfiguration",
+            "s3:PutLifecycleConfiguration",
+            "s3:PutBucketNotification",
+            "s3:GetBucketNotification",
+            "s3:ListBucket",
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:DeleteObject",
+            "s3:GetBucketLocation",
+          ],
+        "Resource":
+          [
+            "arn:aws:s3:::cfn-new-pipeline-input",
+            "arn:aws:s3:::cfn-new-pipeline-input/*",
+            "arn:aws:s3:::cfn-new-pipeline-output",
+            "arn:aws:s3:::cfn-new-pipeline-output/*",
+          ],
+      },
+      {
+        "Sid": "IAMRoleManagement",
+        "Effect": "Allow",
+        "Action":
+          [
+            "iam:CreateRole",
+            "iam:DeleteRole",
+            "iam:GetRole",
+            "iam:PassRole",
+            "iam:AttachRolePolicy",
+            "iam:DetachRolePolicy",
+            "iam:PutRolePolicy",
+            "iam:DeleteRolePolicy",
+            "iam:GetRolePolicy",
+            "iam:ListRolePolicies",
+            "iam:ListAttachedRolePolicies",
+            "iam:TagRole",
+            "iam:UntagRole",
+          ],
+        "Resource": "arn:aws:iam::*:role/*",
+      },
+      {
+        "Sid": "GlueManagement",
+        "Effect": "Allow",
+        "Action":
+          [
+            "glue:CreateDatabase",
+            "glue:DeleteDatabase",
+            "glue:GetDatabase",
+            "glue:CreateJob",
+            "glue:DeleteJob",
+            "glue:GetJob",
+            "glue:UpdateJob",
+            "glue:CreateCrawler",
+            "glue:DeleteCrawler",
+            "glue:GetCrawler",
+            "glue:UpdateCrawler",
+            "glue:CreateWorkflow",
+            "glue:DeleteWorkflow",
+            "glue:GetWorkflow",
+            "glue:CreateTrigger",
+            "glue:DeleteTrigger",
+            "glue:GetTrigger",
+            "glue:UpdateTrigger",
+            "glue:StartTrigger",
+            "glue:TagResource",
+            "glue:UntagResource",
+          ],
+        "Resource": "*",
+      },
+      {
+        "Sid": "LambdaManagement",
+        "Effect": "Allow",
+        "Action":
+          [
+            "lambda:CreateFunction",
+            "lambda:DeleteFunction",
+            "lambda:GetFunction",
+            "lambda:UpdateFunctionCode",
+            "lambda:UpdateFunctionConfiguration",
+            "lambda:AddPermission",
+            "lambda:RemovePermission",
+            "lambda:GetPolicy",
+            "lambda:TagResource",
+            "lambda:UntagResource",
+            "lambda:InvokeFunction",
+          ],
+        "Resource": "arn:aws:lambda:ap-southeast-2:*:function:*",
+      },
+      {
+        "Sid": "CloudWatchLogsForCustomResource",
+        "Effect": "Allow",
+        "Action":
+          [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents",
+            "logs:DeleteLogGroup",
+          ],
+        "Resource": "arn:aws:logs:ap-southeast-2:*:log-group:*",
+      },
+      {
+        "Sid": "STSIdentity",
+        "Effect": "Allow",
+        "Action": "sts:GetCallerIdentity",
+        "Resource": "*",
+      },
+    ],
+}
