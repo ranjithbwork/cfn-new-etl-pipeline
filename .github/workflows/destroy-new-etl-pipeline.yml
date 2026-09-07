@@ -1,0 +1,48 @@
+name: Destroy New ETL Pipeline
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-southeast-2
+  STACK_NAME: new-etl-pipeline
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get bucket names from stack outputs
+        id: buckets
+        run: |
+          INPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='InputBucketNameOut'].OutputValue" --output text)
+          OUTPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='OutputBucketNameOut'].OutputValue" --output text)
+          echo "input_bucket=$INPUT_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "output_bucket=$OUTPUT_BUCKET" >> "$GITHUB_OUTPUT"
+
+      - name: Empty both buckets
+        run: |
+          aws s3 rm s3://${{ steps.buckets.outputs.input_bucket }} --recursive || true
+          aws s3 rm s3://${{ steps.buckets.outputs.output_bucket }} --recursive || true
+
+      - name: Delete CloudFormation stack
+        run: |
+          aws cloudformation delete-stack \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for stack deletion to complete
+        run: |
+          aws cloudformation wait stack-delete-complete \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Confirm deletion
+        run: |
+          echo "Stack ${{ env.STACK_NAME }} deleted successfully, including both S3 buckets."
