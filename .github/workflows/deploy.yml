@@ -1,262 +1,82 @@
-AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  Stack 2 of 2 - IAM roles, Glue Catalog/Job/Crawlers/Workflow, Lambda, and the
-  S3 event notification, for the CFN-managed ETL pipeline (cfn-new prefix).
-  Requires template-buckets.yaml to already be deployed.
+name: Deploy CFN ETL Pipeline
 
-Resources:
+on:
+  workflow_dispatch:
 
-  ### IAM Role — Glue ETL Job ###
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-  GlueJobRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: cfn-new-glue-job-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: glue.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
-      Policies:
-        - PolicyName: cfn-new-glue-job-s3-policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: ListBuckets
-                Effect: Allow
-                Action: s3:ListBucket
-                Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}
-              - Sid: ReadInputAndScripts
-                Effect: Allow
-                Action: s3:GetObject
-                Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}/input/*
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-artifacts-bucket-name}/glue/*
-              - Sid: WriteOutput
-                Effect: Allow
-                Action:
-                  - s3:PutObject
-                  - s3:GetObject
-                Resource: !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}/output/*
-              - Sid: WorkflowRunProperties
-                Effect: Allow
-                Action:
-                  - glue:GetWorkflowRunProperties
-                  - glue:GetWorkflowRun
-                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/cfn-new-workflow
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  ### IAM Role — Glue Crawler ###
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-  GlueCrawlerRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: cfn-new-glue-crawler-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: glue.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
-      Policies:
-        - PolicyName: cfn-new-glue-crawler-s3-policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: ListBuckets
-                Effect: Allow
-                Action: s3:ListBucket
-                Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}
-              - Sid: ReadInputAndOutput
-                Effect: Allow
-                Action: s3:GetObject
-                Resource:
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-input-bucket-name}/input/*
-                  - !Sub arn:aws:s3:::${Fn::ImportValue: cfn-new-output-bucket-name}/output/*
+      - name: Deploy buckets stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/template-buckets.yaml \
+            --stack-name cfn-new-etl-buckets \
+            --region ${{ secrets.AWS_REGION }}
 
-  ### IAM Role — Lambda ###
+      - name: Get bucket names from stack outputs
+        id: buckets
+        run: |
+          INPUT_BUCKET=$(aws cloudformation describe-stacks --stack-name cfn-new-etl-buckets --query "Stacks[0].Outputs[?OutputKey=='InputBucketName'].OutputValue" --output text)
+          ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks --stack-name cfn-new-etl-buckets --query "Stacks[0].Outputs[?OutputKey=='ArtifactsBucketName'].OutputValue" --output text)
+          echo "input_bucket=$INPUT_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "artifacts_bucket=$ARTIFACTS_BUCKET" >> "$GITHUB_OUTPUT"
 
-  LambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: cfn-new-lambda-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-      Policies:
-        - PolicyName: cfn-new-lambda-glue-policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: StartWorkflowOnly
-                Effect: Allow
-                Action: glue:StartWorkflowRun
-                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:workflow/cfn-new-workflow
+      - name: Zip Lambda function
+        run: |
+          cd lambda
+          zip lambda_function.zip lambda_function.py
+          cd ..
 
-  ### Glue Data Catalog Database ###
+      - name: Upload Lambda zip and Glue script to artifacts bucket
+        run: |
+          aws s3 cp lambda/lambda_function.zip s3://${{ steps.buckets.outputs.artifacts_bucket }}/lambda/lambda_function.zip
+          aws s3 cp glue/glue_job.py s3://${{ steps.buckets.outputs.artifacts_bucket }}/glue/glue_job.py
 
-  GlueCatalogDatabase:
-    Type: AWS::Glue::Database
-    Properties:
-      CatalogId: !Ref AWS::AccountId
-      DatabaseInput:
-        Name: cfn_new_catalog_db
-        Description: Catalog for CFN-managed ETL pipeline input/output tables
+      - name: Deploy app stack (IAM, Glue, Lambda, Workflow)
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/template-app.yaml \
+            --stack-name cfn-new-etl-pipeline \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ secrets.AWS_REGION }}
 
-  ### Glue ETL Job (Python Shell) ###
+      - name: Wire S3 event notification to Lambda
+        run: |
+          LAMBDA_ARN=$(aws cloudformation describe-stacks --stack-name cfn-new-etl-pipeline --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionArn'].OutputValue" --output text)
+          cat > /tmp/notification.json << EOF
+          {
+            "LambdaFunctionConfigurations": [
+              {
+                "LambdaFunctionArn": "$LAMBDA_ARN",
+                "Events": ["s3:ObjectCreated:*"],
+                "Filter": {
+                  "Key": {
+                    "FilterRules": [
+                      {"Name": "prefix", "Value": "input/"},
+                      {"Name": "suffix", "Value": ".csv"}
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+          aws s3api put-bucket-notification-configuration \
+            --bucket ${{ steps.buckets.outputs.input_bucket }} \
+            --notification-configuration file:///tmp/notification.json
 
-  GlueTransformJob:
-    Type: AWS::Glue::Job
-    Properties:
-      Name: cfn-new-transform-job
-      Role: !GetAtt GlueJobRole.Arn
-      Command:
-        Name: pythonshell
-        PythonVersion: '3.9'
-        ScriptLocation: !Sub
-          - s3://${Bucket}/glue/glue_job.py
-          - Bucket: !ImportValue cfn-new-artifacts-bucket-name
-      MaxCapacity: 0.0625
-      Timeout: 10
-      MaxRetries: 0
-      GlueVersion: '3.0'
-      ExecutionProperty:
-        MaxConcurrentRuns: 1
-
-  ### Glue Crawlers ###
-
-  GlueInputCrawler:
-    Type: AWS::Glue::Crawler
-    Properties:
-      Name: cfn-new-input-crawler
-      Role: !GetAtt GlueCrawlerRole.Arn
-      DatabaseName: !Ref GlueCatalogDatabase
-      Targets:
-        S3Targets:
-          - Path: !Sub
-              - s3://${Bucket}/input/
-              - Bucket: !ImportValue cfn-new-input-bucket-name
-      SchemaChangePolicy:
-        UpdateBehavior: UPDATE_IN_DATABASE
-        DeleteBehavior: LOG
-
-  GlueOutputCrawler:
-    Type: AWS::Glue::Crawler
-    Properties:
-      Name: cfn-new-output-crawler
-      Role: !GetAtt GlueCrawlerRole.Arn
-      DatabaseName: !Ref GlueCatalogDatabase
-      Targets:
-        S3Targets:
-          - Path: !Sub
-              - s3://${Bucket}/output/
-              - Bucket: !ImportValue cfn-new-output-bucket-name
-      SchemaChangePolicy:
-        UpdateBehavior: UPDATE_IN_DATABASE
-        DeleteBehavior: LOG
-
-  ### Glue Workflow ###
-
-  GlueWorkflow:
-    Type: AWS::Glue::Workflow
-    Properties:
-      Name: cfn-new-workflow
-      Description: Orchestrates input-crawler -> transform-job -> output-crawler
-
-  StartWorkflowTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: start-workflow-trigger
-      WorkflowName: !Ref GlueWorkflow
-      Type: ON_DEMAND
-      Actions:
-        - CrawlerName: !Ref GlueInputCrawler
-      StartOnCreation: false
-
-  AfterInputCrawlerTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: after-input-crawler-trigger
-      WorkflowName: !Ref GlueWorkflow
-      Type: CONDITIONAL
-      StartOnCreation: true
-      Predicate:
-        Logical: ANY
-        Conditions:
-          - LogicalOperator: EQUALS
-            CrawlerName: !Ref GlueInputCrawler
-            CrawlState: SUCCEEDED
-      Actions:
-        - JobName: !Ref GlueTransformJob
-
-  AfterJobTrigger:
-    Type: AWS::Glue::Trigger
-    Properties:
-      Name: after-job-trigger
-      WorkflowName: !Ref GlueWorkflow
-      Type: CONDITIONAL
-      StartOnCreation: true
-      Predicate:
-        Logical: ANY
-        Conditions:
-          - LogicalOperator: EQUALS
-            JobName: !Ref GlueTransformJob
-            State: SUCCEEDED
-      Actions:
-        - CrawlerName: !Ref GlueOutputCrawler
-
-  ### Lambda Function ###
-
-  TriggerLambda:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: cfn-new-trigger-lambda
-      Runtime: python3.12
-      Handler: lambda_function.lambda_handler
-      Role: !GetAtt LambdaRole.Arn
-      Timeout: 30
-      Environment:
-        Variables:
-          GLUE_WORKFLOW_NAME: !Ref GlueWorkflow
-      Code:
-        S3Bucket: !ImportValue cfn-new-artifacts-bucket-name
-        S3Key: lambda/lambda_function.zip
-
-  LambdaInvokePermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref TriggerLambda
-      Action: lambda:InvokeFunction
-      Principal: s3.amazonaws.com
-      SourceArn: !Sub
-        - arn:aws:s3:::${Bucket}
-        - Bucket: !ImportValue cfn-new-input-bucket-name
-      SourceAccount: !Ref AWS::AccountId
-
-Outputs:
-  GlueJobRoleArn:
-    Value: !GetAtt GlueJobRole.Arn
-  GlueCrawlerRoleArn:
-    Value: !GetAtt GlueCrawlerRole.Arn
-  LambdaRoleArn:
-    Value: !GetAtt LambdaRole.Arn
-  LambdaFunctionArn:
-    Value: !GetAtt TriggerLambda.Arn
-  GlueWorkflowName:
-    Value: !Ref GlueWorkflow
+      - name: Upload sample CSV to trigger the pipeline
+        run: |
+          aws s3 cp sample-data/sample.csv s3://${{ steps.buckets.outputs.input_bucket }}/input/sample.csv
