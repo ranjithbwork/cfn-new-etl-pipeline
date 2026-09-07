@@ -1,0 +1,70 @@
+name: Deploy CFN ETL Pipeline
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set account ID
+        id: account
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      - name: Create artifacts bucket if not exists
+        run: |
+          BUCKET="cfn-new-artifacts-${{ steps.account.outputs.id }}"
+          if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            aws s3api create-bucket \
+              --bucket "$BUCKET" \
+              --region ${{ secrets.AWS_REGION }} \
+              --create-bucket-configuration LocationConstraint=${{ secrets.AWS_REGION }}
+          fi
+
+      - name: Zip Lambda function
+        run: |
+          cd lambda
+          zip lambda_function.zip lambda_function.py
+          cd ..
+
+      - name: Upload Lambda zip to artifacts bucket
+        run: |
+          aws s3 cp lambda/lambda_function.zip \
+            s3://cfn-new-artifacts-${{ steps.account.outputs.id }}/lambda/lambda_function.zip
+
+      - name: Create pipeline input bucket if not exists (needed before script upload)
+        run: |
+          if ! aws s3api head-bucket --bucket cfn-new-pipeline-input 2>/dev/null; then
+            aws s3api create-bucket \
+              --bucket cfn-new-pipeline-input \
+              --region ${{ secrets.AWS_REGION }} \
+              --create-bucket-configuration LocationConstraint=${{ secrets.AWS_REGION }}
+          fi
+
+      - name: Upload Glue script to input bucket
+        run: |
+          aws s3 cp glue/glue_job.py \
+            s3://cfn-new-pipeline-input/scripts/glue_job.py
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file cloudformation/template.yaml \
+            --stack-name cfn-new-etl-pipeline \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Upload sample CSVs to trigger the pipeline
+        run: |
+          aws s3 cp sample-data/sample.csv s3://cfn-new-pipeline-input/input/sample.csv
