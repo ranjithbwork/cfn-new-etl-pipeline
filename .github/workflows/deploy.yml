@@ -2,15 +2,6 @@ name: Deploy CFN ETL Pipeline
 
 on:
   workflow_dispatch:
-    inputs:
-      action:
-        description: "Action to perform"
-        required: true
-        default: "deploy"
-        type: choice
-        options:
-          - deploy
-          - delete
 
 env:
   AWS_REGION: ap-southeast-2
@@ -20,7 +11,6 @@ env:
 
 jobs:
   deploy:
-    if: github.event.inputs.action == 'deploy'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -71,31 +61,3 @@ jobs:
             --region ${{ env.AWS_REGION }} \
             --query "Stacks[0].Outputs" \
             --output table
-
-  delete:
-    if: github.event.inputs.action == 'delete'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Empty buckets before stack deletion
-        run: |
-          aws s3 rm s3://${{ env.INPUT_BUCKET }} --recursive || true
-          aws s3 rm s3://cfn-new-pipeline-output --recursive || true
-
-      - name: Delete CloudFormation stack
-        run: |
-          aws cloudformation delete-stack \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }}
-
-      - name: Wait for stack deletion to complete
-        run: |
-          aws cloudformation wait stack-delete-complete \
-            --stack-name ${{ env.STACK_NAME }} \
-            --region ${{ env.AWS_REGION }}
