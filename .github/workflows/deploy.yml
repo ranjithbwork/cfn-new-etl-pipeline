@@ -23,7 +23,8 @@ jobs:
           aws cloudformation deploy \
             --template-file cloudformation/template-buckets.yaml \
             --stack-name cfn-new-etl-buckets \
-            --region ${{ secrets.AWS_REGION }}
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset
 
       - name: Get bucket names from stack outputs
         id: buckets
@@ -50,7 +51,8 @@ jobs:
             --template-file cloudformation/template-app.yaml \
             --stack-name cfn-new-etl-pipeline \
             --capabilities CAPABILITY_NAMED_IAM \
-            --region ${{ secrets.AWS_REGION }}
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset
 
       - name: Wire S3 event notification to Lambda
         run: |
